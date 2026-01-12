@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>Batwoman: Gotham Justice</title>
+    <style>
+        body { margin: 0; overflow: hidden; font-family: 'Courier New', Courier, monospace; background: #000; }
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; color: white; }
+        
+        /* Menu */
+        #menu { 
+            position: absolute; width: 100%; height: 100%; background: rgba(0,0,0,0.9); 
+            display: flex; flex-direction: column; align-items: center; justify-content: center; pointer-events: all;
+        }
+        #logo { width: 300px; margin-bottom: 20px; }
+        .btn { 
+            background: #b00; color: white; border: none; padding: 15px 30px; 
+            margin: 10px; cursor: pointer; font-size: 1.2rem; transition: 0.3s;
+        }
+        .btn:hover { background: #f00; transform: scale(1.1); }
+
+        /* HUD */
+        #hud { display: none; padding: 20px; }
+        #health-bar { width: 200px; height: 20px; border: 2px solid white; background: #333; }
+        #health-fill { width: 100%; height: 100%; background: #0f0; transition: 0.3s; }
+        #counter { font-size: 1.5rem; margin-top: 10px; }
+        
+        #win-screen { 
+            display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            font-size: 5rem; color: gold; text-shadow: 0 0 20px yellow;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="ui-layer">
+        <div id="menu">
+            <img src="logo.png" id="logo" alt="Batwoman Logo">
+            <button class="btn" onclick="startGame('Fácil')">FÁCIL</button>
+            <button class="btn" onclick="startGame('Normal')">NORMAL</button>
+            <button class="btn" onclick="startGame('Pesadelo')">PESADELO</button>
+        </div>
+
+        <div id="hud">
+            <div id="health-bar"><div id="health-fill"></div></div>
+            <div id="counter">Bandidos: <span id="enemies-left">20</span></div>
+        </div>
+
+        <div id="win-screen">WINNER</div>
+    </div>
+
+    <audio id="bgm" loop src="musica.mp3"></audio>
+
+    <script type="importmap">
+        { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js", "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/" } }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+        let scene, camera, renderer, clock, mixer;
+        let player = { current: null, animations: {}, state: 'idle' };
+        let enemies = [];
+        let gameActive = false;
+        let enemiesToKill = 20;
+
+        const loader = new GLTFLoader();
+
+        function init() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x020205);
+            scene.fog = new THREE.FogExp2(0x020205, 0.015);
+
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, 5, 10);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.shadowMap.enabled = true;
+            document.body.appendChild(renderer.domElement);
+
+            const ambient = new THREE.AmbientLight(0x404040, 2);
+            scene.add(ambient);
+            const sun = new THREE.DirectionalLight(0xffffff, 1);
+            sun.position.set(5, 10, 7);
+            scene.add(sun);
+
+            createCity();
+            loadPlayerModels();
+            
+            clock = new THREE.Clock();
+            animate();
+        }
+
+        function createCity() {
+            // Chão
+            const floor = new THREE.Mesh(new THREE.PlaneGeometry(200, 200), new THREE.MeshStandardLight({ color: 0x111111 }));
+            floor.rotation.x = -Math.PI / 2;
+            scene.add(floor);
+
+            // Prédios simples
+            for (let i = 0; i < 60; i++) {
+                const h = 10 + Math.random() * 30;
+                const building = new THREE.Mesh(
+                    new THREE.BoxGeometry(5, h, 5),
+                    new THREE.MeshStandardMaterial({ color: 0x111122 })
+                );
+                building.position.set(Math.random() * 160 - 80, h/2, Math.random() * 160 - 80);
+                scene.add(building);
+            }
+        }
+
+        async function loadPlayerModels() {
+            const anims = ['idle', 'walk', 'run', 'punch', 'kick'];
+            for (const anim of anims) {
+                const gltf = await loader.loadAsync(`player_${anim}.glb`);
+                gltf.scene.visible = false;
+                gltf.scene.traverse(c => { if(c.isMesh) c.castShadow = true; });
+                scene.add(gltf.scene);
+                
+                player.animations[anim] = {
+                    mesh: gltf.scene,
+                    mixer: new THREE.AnimationMixer(gltf.scene),
+                    clip: gltf.animations[0]
+                };
+            }
+            switchPlayerAnim('idle');
+        }
+
+        function switchPlayerAnim(state) {
+            if (player.current) player.current.mesh.visible = false;
+            player.state = state;
+            player.current = player.animations[state];
+            player.current.mesh.visible = true;
+            player.current.mixer.clipAction(player.current.clip).play();
+        }
+
+        window.startGame = function(diff) {
+            document.getElementById('menu').style.display = 'none';
+            document.getElementById('hud').style.display = 'block';
+            document.getElementById('bgm').play();
+            gameActive = true;
+            // Aqui você poderia ajustar a vida baseada na dificuldade
+        };
+
+        // Inputs
+        const keys = {};
+        window.addEventListener('keydown', (e) => keys[e.code] = true);
+        window.addEventListener('keyup', (e) => keys[e.code] = false);
+
+        function updatePlayer() {
+            if (!player.current || !gameActive) return;
+
+            let moving = false;
+            if (keys['KeyW']) { 
+                player.current.mesh.translateZ(0.1); 
+                moving = true; 
+            }
+            
+            // Lógica simples de troca de estado
+            if (keys['Space']) { if(player.state !== 'punch') switchPlayerAnim('punch'); }
+            else if (keys['KeyK']) { if(player.state !== 'kick') switchPlayerAnim('kick'); }
+            else if (moving) { if(player.state !== 'walk') switchPlayerAnim('walk'); }
+            else { if(player.state !== 'idle') switchPlayerAnim('idle'); }
+
+            // Camera segue player
+            camera.position.lerp(new THREE.Vector3(player.current.mesh.position.x, 5, player.current.mesh.position.z + 10), 0.1);
+            camera.lookAt(player.current.mesh.position);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const delta = clock.getDelta();
+            
+            if (player.current) player.current.mixer.update(delta);
+            updatePlayer();
+            
+            renderer.render(scene, camera);
+        }
+
+        init();
+    </script>
+</body>
+</html>
