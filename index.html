@@ -4,206 +4,125 @@
     <meta charset="UTF-8">
     <title>Batwoman: Gotham Justice</title>
     <style>
-        body { margin: 0; overflow: hidden; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #000; }
-        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; color: white; z-index: 10; }
-        
-        #menu { 
-            position: absolute; width: 100%; height: 100%; background: radial-gradient(circle, #220000 0%, #000 100%); 
-            display: flex; flex-direction: column; align-items: center; justify-content: center; pointer-events: all;
-        }
-        #logo { width: 250px; margin-bottom: 20px; filter: drop-shadow(0 0 10px red); }
-        .btn { 
-            background: #800; color: white; border: 2px solid #f00; padding: 12px 25px; 
-            margin: 8px; cursor: pointer; font-weight: bold; width: 150px; transition: 0.2s;
-        }
-        .btn:hover { background: #f00; transform: scale(1.05); }
-
-        #hud { display: none; padding: 20px; text-shadow: 2px 2px #000; }
-        #health-bar { width: 200px; height: 15px; border: 2px solid #fff; background: #222; margin-bottom: 5px; }
-        #health-fill { width: 100%; height: 100%; background: #f00; }
-        
-        #win-screen { 
-            display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            font-size: 4rem; color: #ff0; text-align: center;
-        }
+        body { margin: 0; overflow: hidden; background: #000; color: white; font-family: sans-serif; }
+        #ui { position: absolute; width: 100%; height: 100%; pointer-events: none; z-index: 10; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+        #menu { pointer-events: all; background: rgba(0,0,0,0.8); padding: 20px; border: 2px solid red; text-align: center; }
+        .btn { background: red; color: white; border: none; padding: 10px 20px; cursor: pointer; font-weight: bold; }
+        #hud { position: absolute; top: 10px; left: 10px; display: none; }
     </style>
 </head>
 <body>
 
-    <div id="ui-layer">
+    <div id="ui">
         <div id="menu">
-            <img src="logo.png" id="logo">
+            <img src="logo.png" style="width:200px"><br><br>
             <button class="btn" onclick="startGame()">INICIAR JOGO</button>
-            <p style="font-size: 0.8rem;">W: Andar | Espaço: Soco | K: Chute</p>
         </div>
-
         <div id="hud">
-            <div>BATWOMAN</div>
-            <div id="health-bar"><div id="health-fill"></div></div>
-            <div id="counter">Bandidos restantes: <span id="enemies-left">20</span></div>
+            HP: <div style="width:100px; height:10px; border:1px solid white;"><div id="hp" style="width:100%; height:100%; background:red;"></div></div>
+            Bandidos: <span id="count">20</span>
         </div>
-
-        <div id="win-screen">MISSÃO CUMPRIDA!</div>
     </div>
 
     <audio id="bgm" loop src="musica.mp3"></audio>
 
     <script type="importmap">
-        {
-            "imports": {
-                "three": "https://unpkg.com/three@0.150.0/build/three.module.js",
-                "three/addons/": "https://unpkg.com/three@0.150.0/examples/jsm/"
-            }
-        }
+        { "imports": { "three": "https://unpkg.com/three@0.145.0/build/three.module.js", "three/addons/": "https://unpkg.com/three@0.145.0/examples/jsm/" } }
     </script>
 
     <script type="module">
         import * as THREE from 'three';
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
-        let scene, camera, renderer, clock;
-        let player = { current: null, animations: {}, state: 'idle', meshGroup: new THREE.Group() };
-        let gameActive = false;
-
-        const loader = new GLTFLoader();
+        let scene, camera, renderer, playerGroup, mixer;
+        let models = {};
+        let currentState = 'idle';
 
         function init() {
             scene = new THREE.Scene();
-            scene.background = new THREE.Color(0x05050a);
-            scene.fog = new THREE.Fog(0x05050a, 10, 50);
+            scene.background = new THREE.Color(0x050505);
 
-            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.1, 500);
             camera.position.set(0, 5, 10);
 
-            // FORÇANDO WEBGL 1 para compatibilidade com Intel Q45
-            renderer = new THREE.WebGLRenderer({ antialias: false, precision: "mediump" });
+            // TENTATIVA FINAL DE COMPATIBILIDADE
+            renderer = new THREE.WebGLRenderer({ antialias: false });
             renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1)); // Otimiza para telas lentas
             document.body.appendChild(renderer.domElement);
 
-            const light = new THREE.HemisphereLight(0xffffff, 0x444444, 1.5);
+            // Luz simplificada (BasicMaterial não precisa de luz, mas GLB sim)
+            const light = new THREE.AmbientLight(0xffffff, 2);
             scene.add(light);
 
-            createGotham();
-            loadCharacter();
+            playerGroup = new THREE.Group();
+            scene.add(playerGroup);
 
-            clock = new THREE.Clock();
+            // Chão e Prédios simplificados ao extremo
+            const ground = new THREE.Mesh(new THREE.PlaneGeometry(100,100), new THREE.MeshBasicMaterial({color: 0x111111}));
+            ground.rotation.x = -Math.PI/2;
+            scene.add(ground);
+
+            loadModels();
             animate();
         }
 
-        function createGotham() {
-            // Chão com material correto
-            const floor = new THREE.Mesh(
-                new THREE.PlaneGeometry(200, 200),
-                new THREE.MeshBasicMaterial({ color: 0x111111 })
-            );
-            floor.rotation.x = -Math.PI / 2;
-            scene.add(floor);
-
-            // Prédios simples (caixas sem reflexo para ser leve)
-            for (let i = 0; i < 50; i++) {
-                const h = 5 + Math.random() * 20;
-                const building = new THREE.Mesh(
-                    new THREE.BoxGeometry(4, h, 4),
-                    new THREE.MeshBasicMaterial({ color: 0x0a0a15 })
-                );
-                building.position.set(Math.random() * 100 - 50, h/2, Math.random() * 100 - 50);
-                scene.add(building);
-            }
-        }
-
-        async function loadCharacter() {
-            scene.add(player.meshGroup);
+        async function loadModels() {
+            const loader = new GLTFLoader();
             const anims = ['idle', 'walk', 'run', 'punch', 'kick'];
             
-            for (const name of anims) {
+            for(let a of anims) {
                 try {
-                    const gltf = await loader.loadAsync(`player_${name}.glb`);
-                    const model = gltf.scene;
-                    model.visible = false;
-                    player.meshGroup.add(model);
-                    
-                    const mixer = new THREE.AnimationMixer(model);
-                    const action = mixer.clipAction(gltf.animations[0]);
-                    
-                    player.animations[name] = { model, mixer, action };
-                } catch (e) {
-                    console.error("Erro ao carregar animação: " + name, e);
-                }
+                    const gltf = await loader.loadAsync(`player_${a}.glb`);
+                    gltf.scene.visible = false;
+                    playerGroup.add(gltf.scene);
+                    models[a] = {
+                        mesh: gltf.scene,
+                        mixer: new THREE.AnimationMixer(gltf.scene),
+                        clip: gltf.animations[0]
+                    };
+                } catch(e) { console.log("Erro no arquivo: " + a); }
             }
-            if (player.animations['idle']) switchState('idle');
+            changeState('idle');
         }
 
-        function switchState(newState) {
-            if (player.state === newState) return;
-            
-            // Esconde o anterior
-            if (player.current) player.current.model.visible = false;
-            
-            player.state = newState;
-            player.current = player.animations[newState];
-            
-            // Mostra o novo
-            if (player.current) {
-                player.current.model.visible = true;
-                player.current.action.reset().play();
-            }
+        function changeState(name) {
+            if(!models[name] || currentState === name) return;
+            if(models[currentState]) models[currentState].mesh.visible = false;
+            currentState = name;
+            models[name].mesh.visible = true;
+            models[name].mixer.clipAction(models[name].clip).play();
         }
 
         const keys = {};
         window.onkeydown = (e) => keys[e.code] = true;
         window.onkeyup = (e) => keys[e.code] = false;
 
-        window.startGame = function() {
+        window.startGame = () => {
             document.getElementById('menu').style.display = 'none';
             document.getElementById('hud').style.display = 'block';
-            document.getElementById('bgm').play().catch(() => {});
-            gameActive = true;
+            document.getElementById('bgm').play().catch(()=>{});
         };
-
-        function update() {
-            if (!gameActive || !player.current) return;
-
-            let moving = false;
-            if (keys['KeyW']) {
-                player.meshGroup.translateZ(0.12);
-                moving = true;
-            }
-            if (keys['KeyA']) player.meshGroup.rotation.y += 0.05;
-            if (keys['KeyD']) player.meshGroup.rotation.y -= 0.05;
-
-            // Lógica de animação
-            if (keys['Space']) switchState('punch');
-            else if (keys['KeyK']) switchState('kick');
-            else if (moving) switchState('walk');
-            else switchState('idle');
-
-            // Câmera em terceira pessoa
-            const relativeCameraOffset = new THREE.Vector3(0, 5, -10);
-            const cameraOffset = relativeCameraOffset.applyMatrix4(player.meshGroup.matrixWorld);
-            camera.position.lerp(cameraOffset, 0.1);
-            camera.lookAt(player.meshGroup.position);
-        }
 
         function animate() {
             requestAnimationFrame(animate);
-            const delta = clock.getDelta();
-            
-            if (player.current && player.current.mixer) {
-                player.current.mixer.update(delta);
+            const delta = 0.016; // Aproximado para 60fps
+
+            if(keys['KeyW']) {
+                playerGroup.translateZ(0.1);
+                changeState('walk');
+            } else if(keys['Space']) {
+                changeState('punch');
+            } else {
+                changeState('idle');
             }
+
+            if(models[currentState]) models[currentState].mixer.update(delta);
             
-            update();
+            camera.lookAt(playerGroup.position);
             renderer.render(scene, camera);
         }
 
         init();
-        
-        window.onresize = () => {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-        };
     </script>
 </body>
 </html>
