@@ -2,29 +2,46 @@
 <html lang="pt-br">
 <head>
     <meta charset="UTF-8">
-    <title>Batwoman: Gotham Justice</title>
+    <title>Batwoman: Arkham Style</title>
     <style>
-        body { margin: 0; overflow: hidden; background: #000; color: white; font-family: 'Segoe UI', sans-serif; }
-        #ui { position: absolute; width: 100%; height: 100%; pointer-events: none; z-index: 10; display: flex; flex-direction: column; align-items: center; justify-content: center; }
-        #menu { pointer-events: all; background: rgba(0,0,0,0.9); padding: 30px; border: 3px solid #f00; text-align: center; border-radius: 15px; }
-        .btn { background: #b00; color: white; border: none; padding: 15px 30px; cursor: pointer; font-weight: bold; font-size: 1.2rem; margin-top: 20px; }
-        .btn:hover { background: #f00; }
-        #hud { position: absolute; top: 20px; left: 20px; display: none; text-shadow: 2px 2px #000; }
-        #win-screen { display: none; color: gold; font-size: 5rem; font-weight: bold; text-shadow: 0 0 20px #f00; }
+        body { margin: 0; overflow: hidden; background: #000; font-family: 'Segoe UI', sans-serif; }
+        #ui { position: absolute; width: 100%; height: 100%; pointer-events: none; z-index: 10; color: white; }
+        
+        #menu { 
+            position: absolute; width: 100%; height: 100%; background: radial-gradient(circle, #100 0%, #000 100%); 
+            display: flex; flex-direction: column; align-items: center; justify-content: center; pointer-events: all;
+        }
+        .btn { background: #600; color: white; border: 2px solid #f00; padding: 15px 40px; cursor: pointer; font-weight: bold; font-size: 1.2rem; transition: 0.3s; }
+        .btn:hover { background: #f00; transform: scale(1.1); }
+
+        #hud { display: none; position: absolute; top: 20px; left: 20px; }
+        #health-container { width: 250px; height: 12px; border: 2px solid #555; background: #111; position: relative; }
+        #hp-fill { width: 100%; height: 100%; background: linear-gradient(90deg, #f00, #a00); transition: 0.5s; }
+        
+        #combo-ui { position: absolute; right: 50px; top: 50%; color: #ff0; font-size: 3rem; font-style: italic; opacity: 0; transition: 0.2s; }
+        
+        #win-screen { display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 5rem; color: #ff0; text-shadow: 0 0 20px #f00; }
+        
+        /* Barra de vida flutuante dos vilões */
+        .enemy-health { position: absolute; width: 40px; height: 4px; background: #f00; border: 1px solid #000; display: none; }
     </style>
 </head>
 <body>
 
     <div id="ui">
         <div id="menu">
-            <img src="logo.png" style="width:250px; display:block; margin: 0 auto;">
-            <button class="btn" onclick="startGame()">INICIAR MISSÃO</button>
-            <p>W: Correr | Espaço: Soco | K: Chute</p>
+            <img src="logo.png" style="width:300px; margin-bottom: 20px;">
+            <button class="btn" onclick="startGame()">INICIAR COMBATE</button>
+            <p>MOUSE: Girar Câmera | W: Correr | Espaço: Soco | K: Chute</p>
         </div>
+
         <div id="hud">
-            HP BATWOMAN: <div style="width:200px; height:15px; border:2px solid #fff; background:#333;"><div id="hp" style="width:100%; height:100%; background:#f00;"></div></div>
-            <div id="status" style="margin-top:10px; font-size: 1.5rem;">Bandidos Restantes: <span id="count">20</span></div>
+            <div style="font-weight:bold; letter-spacing: 2px; margin-bottom: 5px;">BATWOMAN</div>
+            <div id="health-container"><div id="hp-fill"></div></div>
+            <div id="counter" style="margin-top:10px;">BANDIDOS: <span id="enemies-left">20</span></div>
         </div>
+
+        <div id="combo-ui">X<span id="combo-count">0</span> HIT</div>
         <div id="win-screen">WINNER</div>
     </div>
 
@@ -38,84 +55,95 @@
         import * as THREE from 'three';
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
-        let scene, camera, renderer, playerGroup, clock;
-        let models = {};
-        let enemies = [];
+        let scene, camera, renderer, clock, playerGroup;
+        let models = {}, enemies = [], gameActive = false;
         let currentState = 'idle';
-        let gameActive = false;
-        let enemiesCount = 20;
+        let combo = 0, enemiesRemaining = 20;
+
+        // Câmera Orbital (Arkham Style)
+        let cameraAngle = 0, cameraHeight = 4, cameraDistance = 10;
+        let mouseX = 0;
 
         function init() {
             scene = new THREE.Scene();
             scene.background = new THREE.Color(0x020205);
+            scene.fog = new THREE.Fog(0x020205, 5, 60);
 
-            camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.1, 1000);
-            camera.position.set(0, 10, 20);
-
-            renderer = new THREE.WebGLRenderer({ antialias: false });
+            camera = new THREE.PerspectiveCamera(65, window.innerWidth/window.innerHeight, 0.1, 1000);
+            
+            renderer = new THREE.WebGLRenderer({ antialias: false, precision: 'mediump' });
             renderer.setSize(window.innerWidth, window.innerHeight);
             document.body.appendChild(renderer.domElement);
 
-            // Luzes mais fortes para os modelos aparecerem
-            const ambient = new THREE.AmbientLight(0xffffff, 1.5);
+            const ambient = new THREE.AmbientLight(0x4040ff, 0.5); // Luz azulada de Gotham
             scene.add(ambient);
-            const directional = new THREE.DirectionalLight(0xffffff, 1);
-            directional.position.set(5, 10, 5);
-            scene.add(directional);
+            const spot = new THREE.PointLight(0xffffff, 2, 20);
+            scene.add(spot);
 
             playerGroup = new THREE.Group();
             scene.add(playerGroup);
+            playerGroup.add(spot); // Luz segue a Batwoman
 
-            // Chão de Gotham
-            const ground = new THREE.Mesh(new THREE.PlaneGeometry(200, 200), new THREE.MeshBasicMaterial({color: 0x101010}));
-            ground.rotation.x = -Math.PI/2;
-            scene.add(ground);
-
-            createEnemies();
-            loadModels();
+            createWorld();
+            loadPlayer();
             
+            document.addEventListener('mousemove', (e) => {
+                if(gameActive) mouseX -= e.movementX * 0.005;
+            });
+
             clock = new THREE.Clock();
             animate();
         }
 
-        async function loadModels() {
-            const loader = new GLTFLoader();
-            const anims = ['idle', 'walk', 'run', 'punch', 'kick'];
-            
-            for(let a of anims) {
-                try {
-                    const gltf = await loader.loadAsync(`./player_${a}.glb`);
-                    const m = gltf.scene;
-                    m.visible = false;
-                    m.scale.set(2, 2, 2); // Aumentei a escala caso estivessem sumidos por serem pequenos
-                    playerGroup.add(m);
-                    models[a] = {
-                        mesh: m,
-                        mixer: new THREE.AnimationMixer(m),
-                        clip: gltf.animations[0]
-                    };
-                } catch(e) { console.error("Falha ao carregar: " + a); }
-            }
-            changeState('idle');
-        }
+        function createWorld() {
+            // Chão com grade (estilo tecnológico)
+            const grid = new THREE.GridHelper(200, 40, 0xff0000, 0x222222);
+            scene.add(grid);
 
-        function createEnemies() {
-            const geo = new THREE.BoxGeometry(1, 2, 1);
-            const mat = new THREE.MeshBasicMaterial({color: 0x330000});
+            // Prédios com janelas brilhantes (Emissive)
+            for(let i=0; i<40; i++) {
+                const h = 10 + Math.random()*30;
+                const b = new THREE.Mesh(
+                    new THREE.BoxGeometry(6, h, 6),
+                    new THREE.MeshBasicMaterial({ color: 0x050510 })
+                );
+                b.position.set(Math.random()*150-75, h/2, Math.random()*150-75);
+                scene.add(b);
+            }
+            
+            // Bandidos
             for(let i=0; i<20; i++) {
-                const enemy = new THREE.Mesh(geo, mat);
-                enemy.position.set(Math.random()*100-50, 1, Math.random()*100-50);
+                const enemy = new THREE.Group();
+                const body = new THREE.Mesh(new THREE.BoxGeometry(1.2, 2.5, 1.2), new THREE.MeshBasicMaterial({color: 0x333333}));
+                enemy.add(body);
+                enemy.hp = 100;
+                enemy.position.set(Math.random()*80-40, 1.25, Math.random()*80-40);
                 scene.add(enemy);
                 enemies.push(enemy);
             }
         }
 
-        function changeState(name) {
-            if(!models[name] || currentState === name) return;
+        async function loadPlayer() {
+            const loader = new GLTFLoader();
+            const anims = ['idle', 'walk', 'run', 'punch', 'kick'];
+            for(let a of anims) {
+                try {
+                    const gltf = await loader.loadAsync(`./player_${a}.glb`);
+                    gltf.scene.visible = false;
+                    gltf.scene.scale.set(2.5, 2.5, 2.5);
+                    playerGroup.add(gltf.scene);
+                    models[a] = { mesh: gltf.scene, mixer: new THREE.AnimationMixer(gltf.scene), clip: gltf.animations[0] };
+                } catch(e) { console.error("Erro no GLB:", a); }
+            }
+            changeState('idle');
+        }
+
+        function changeState(n) {
+            if(!models[n] || currentState === n) return;
             if(models[currentState]) models[currentState].mesh.visible = false;
-            currentState = name;
-            models[name].mesh.visible = true;
-            models[name].mixer.clipAction(models[name].clip).play();
+            currentState = n;
+            models[n].mesh.visible = true;
+            models[n].mixer.clipAction(models[n].clip).reset().play();
         }
 
         const keys = {};
@@ -125,24 +153,34 @@
         window.startGame = () => {
             document.getElementById('menu').style.display = 'none';
             document.getElementById('hud').style.display = 'block';
-            document.getElementById('bgm').play().catch(()=>{});
+            document.getElementById('bgm').play();
+            document.body.requestPointerLock();
             gameActive = true;
         };
 
-        function checkCombat() {
+        function combat() {
             if(keys['Space'] || keys['KeyK']) {
-                enemies.forEach((en, index) => {
-                    if(en.visible && playerGroup.position.distanceTo(en.position) < 3) {
-                        en.visible = false;
-                        enemiesCount--;
-                        document.getElementById('count').innerText = enemiesCount;
-                        if(enemiesCount <= 0) {
-                            document.getElementById('win-screen').style.display = 'block';
-                            setTimeout(() => location.reload(), 5000);
+                enemies.forEach(en => {
+                    if(en.hp > 0 && playerGroup.position.distanceTo(en.position) < 4) {
+                        en.hp -= 2; // Dano por frame de ataque
+                        showCombo();
+                        if(en.hp <= 0) {
+                            en.visible = false;
+                            enemiesRemaining--;
+                            document.getElementById('enemies-left').innerText = enemiesRemaining;
                         }
                     }
                 });
             }
+        }
+
+        function showCombo() {
+            combo++;
+            const el = document.getElementById('combo-ui');
+            el.style.opacity = 1;
+            document.getElementById('combo-count').innerText = combo;
+            clearTimeout(window.comboTimer);
+            window.comboTimer = setTimeout(() => { el.style.opacity = 0; combo = 0; }, 2000);
         }
 
         function animate() {
@@ -150,26 +188,22 @@
             const delta = clock.getDelta();
 
             if(gameActive) {
-                if(keys['KeyW']) {
-                    playerGroup.translateZ(0.15);
-                    changeState('run');
-                } else if(keys['Space']) {
-                    changeState('punch');
-                    checkCombat();
-                } else if(keys['KeyK']) {
-                    changeState('kick');
-                    checkCombat();
-                } else {
-                    changeState('idle');
-                }
-                
-                if(keys['KeyA']) playerGroup.rotation.y += 0.05;
-                if(keys['KeyD']) playerGroup.rotation.y -= 0.05;
+                // Rotação da Batwoman baseada no Mouse (Arkham Style)
+                playerGroup.rotation.y = mouseX;
 
-                // Câmera segue
-                const camPos = playerGroup.position.clone().add(new THREE.Vector3(0, 8, 15));
-                camera.position.lerp(camPos, 0.1);
-                camera.lookAt(playerGroup.position);
+                let moving = false;
+                if(keys['KeyW']) { playerGroup.translateZ(0.18); moving = true; }
+                
+                if(keys['Space']) { changeState('punch'); combat(); }
+                else if(keys['KeyK']) { changeState('kick'); combat(); }
+                else if(moving) { changeState('run'); }
+                else { changeState('idle'); }
+
+                // Câmera Terceira Pessoa suave
+                const offsetX = Math.sin(mouseX) * cameraDistance;
+                const offsetZ = Math.cos(mouseX) * cameraDistance;
+                camera.position.set(playerGroup.position.x - offsetX, playerGroup.position.y + cameraHeight, playerGroup.position.z - offsetZ);
+                camera.lookAt(playerGroup.position.x, playerGroup.position.y + 2, playerGroup.position.z);
             }
 
             if(models[currentState]) models[currentState].mixer.update(delta);
