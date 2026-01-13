@@ -2,43 +2,55 @@
 <html lang="pt-br">
 <head>
     <meta charset="UTF-8">
-    <title>Batwoman: Arkham Justice</title>
+    <title>Batwoman: Justice City</title>
     <style>
-        body { margin: 0; overflow: hidden; background: #000; font-family: 'Segoe UI', sans-serif; }
-        #ui { position: absolute; width: 100%; height: 100%; pointer-events: none; z-index: 10; color: white; }
+        body { margin: 0; overflow: hidden; background: #000; font-family: 'Segoe UI', sans-serif; color: white; }
+        #ui { position: absolute; width: 100%; height: 100%; pointer-events: none; z-index: 10; }
+        
         #menu { 
-            position: absolute; width: 100%; height: 100%; background: radial-gradient(circle, #100 0%, #000 100%); 
+            position: absolute; width: 100%; height: 100%; background: radial-gradient(circle, #200 0%, #000 100%); 
             display: flex; flex-direction: column; align-items: center; justify-content: center; pointer-events: all;
         }
-        .btn { background: #600; color: white; border: 2px solid #f00; padding: 15px 40px; cursor: pointer; font-weight: bold; font-size: 1.2rem; }
+        .btn { background: #800; color: white; border: 2px solid #f00; padding: 15px 40px; cursor: pointer; font-weight: bold; margin: 10px; transition: 0.2s; }
+        .btn:hover { background: #f00; transform: scale(1.1); }
+
         #hud { display: none; position: absolute; top: 20px; left: 20px; }
-        #health-container { width: 250px; height: 12px; border: 2px solid #555; background: #111; }
-        #hp-fill { width: 100%; height: 100%; background: #f00; }
-        #combo-ui { position: absolute; right: 50px; top: 50%; color: #ff0; font-size: 3rem; font-style: italic; opacity: 0; transition: 0.2s; }
-        #win-screen { display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 5rem; color: #ff0; text-shadow: 0 0 20px #f00; }
+        .bar-bg { width: 200px; height: 15px; border: 2px solid #fff; background: #222; }
+        #hp-fill { width: 100%; height: 100%; background: #f00; transition: 0.2s; }
         
-        /* Barra de vida dos inimigos (CSS puro para não pesar) */
-        .e-hp-bg { position: absolute; width: 50px; height: 6px; background: #300; border: 1px solid #000; pointer-events: none; }
-        .e-hp-fill { width: 100%; height: 100%; background: #f00; }
+        #game-over, #win-screen { 
+            display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); 
+            text-align: center; font-size: 4rem; font-weight: bold; pointer-events: all;
+        }
+        #game-over { color: red; }
+        #win-screen { color: gold; }
+
+        /* Barras de HP dos Inimigos */
+        .e-hp-bar { position: absolute; width: 40px; height: 4px; background: #500; border: 1px solid #000; }
+        .e-hp-inner { width: 100%; height: 100%; background: #f00; }
     </style>
 </head>
 <body>
 
     <div id="ui">
         <div id="menu">
-            <img src="logo.png" style="width:300px; margin-bottom: 20px;">
-            <button class="btn" onclick="startGame()">INICIAR COMBATE</button>
-            <p>MOUSE: Câmera | W: Correr | Espaço: Soco | K: Chute</p>
+            <img src="logo.png" style="width:250px; margin-bottom:20px;">
+            <button class="btn" onclick="startGame('facil')">FÁCIL</button>
+            <button class="btn" onclick="startGame('normal')">NORMAL</button>
+            <button class="btn" onclick="startGame('pesadelo')">PESADELO</button>
         </div>
+
         <div id="hud">
-            <div style="font-weight:bold; margin-bottom: 5px;">BATWOMAN</div>
-            <div id="health-container"><div id="hp-fill"></div></div>
-            <div id="counter" style="margin-top:10px;">BANDIDOS: <span id="enemies-left">20</span></div>
+            <div>BATWOMAN</div>
+            <div class="bar-bg"><div id="hp-fill"></div></div>
+            <div id="status" style="margin-top:5px;">BANDIDOS: <span id="count">20</span></div>
         </div>
-        <div id="combo-ui">X<span id="combo-count">0</span> HIT</div>
-        <div id="win-screen">WINNER</div>
+
+        <div id="game-over">FALHA NA MISSÃO<br><button class="btn" onclick="location.reload()">REENTRAR</button></div>
+        <div id="win-screen">CIDADE SALVA!<br><button class="btn" onclick="location.reload()">MENU</button></div>
     </div>
-    <div id="enemy-hps"></div> <audio id="bgm" loop src="musica.mp3"></audio>
+
+    <audio id="bgm" loop src="musica.mp3"></audio>
 
     <script type="importmap">
         { "imports": { "three": "https://unpkg.com/three@0.150.0/build/three.module.js", "three/addons/": "https://unpkg.com/three@0.150.0/examples/jsm/" } }
@@ -50,152 +62,174 @@
 
         let scene, camera, renderer, clock, playerGroup;
         let models = {}, enemies = [], gameActive = false;
-        let currentState = 'idle', mouseX = 0, combo = 0;
+        let playerHP = 100, difficulty = 'normal', mouseX = 0;
 
-        const fbxLoader = new FBXLoader();
+        const loader = new FBXLoader();
 
         function init() {
             scene = new THREE.Scene();
             scene.background = new THREE.Color(0x020205);
-            scene.fog = new THREE.Fog(0x020205, 10, 80);
+            scene.fog = new THREE.Fog(0x020205, 10, 100);
 
             camera = new THREE.PerspectiveCamera(65, window.innerWidth/window.innerHeight, 0.1, 1000);
             renderer = new THREE.WebGLRenderer({ antialias: false });
             renderer.setSize(window.innerWidth, window.innerHeight);
             document.body.appendChild(renderer.domElement);
 
-            scene.add(new THREE.AmbientLight(0xffffff, 0.7));
-            const pLight = new THREE.PointLight(0xff0000, 2, 15);
+            scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+            const sun = new THREE.DirectionalLight(0xffffff, 1);
+            sun.position.set(10, 20, 10);
+            scene.add(sun);
+
             playerGroup = new THREE.Group();
-            playerGroup.add(pLight); pLight.position.y = 3;
             scene.add(playerGroup);
 
-            // Chão e Prédios
-            scene.add(new THREE.GridHelper(400, 40, 0x440000, 0x111111));
+            // Chão e Cidade
+            const grid = new THREE.GridHelper(400, 50, 0x440000, 0x111111);
+            scene.add(grid);
 
-            loadPlayer();
-            loadEnemies();
-
-            document.addEventListener('mousemove', (e) => { if(gameActive) mouseX -= e.movementX * 0.005; });
+            loadAssets();
+            document.addEventListener('mousemove', (e) => { if(gameActive) mouseX -= e.movementX * 0.004; });
             clock = new THREE.Clock();
             animate();
         }
 
-        async function loadPlayer() {
-            const anims = ['idle', 'walk', 'run', 'punch', 'kick'];
+        async function loadAssets() {
+            const anims = ['idle', 'run', 'punch', 'kick'];
             for(let a of anims) {
-                const fbx = await fbxLoader.loadAsync(`./player_${a}.fbx`);
-                fbx.visible = false;
-                fbx.scale.set(0.03, 0.03, 0.03); 
-                playerGroup.add(fbx);
-                models[a] = { mesh: fbx, mixer: new THREE.AnimationMixer(fbx), action: null };
-                models[a].action = models[a].mixer.clipAction(fbx.animations[0]);
+                try {
+                    const fbx = await loader.loadAsync(`./player_${a}.fbx`);
+                    fbx.scale.set(0.04, 0.04, 0.04);
+                    fbx.visible = false;
+                    playerGroup.add(fbx);
+                    models[a] = { mesh: fbx, mixer: new THREE.AnimationMixer(fbx), action: null };
+                    models[a].action = models[a].mixer.clipAction(fbx.animations[0]);
+                } catch(e) { console.error("Erro no arquivo player_"+a); }
             }
-            changeState('idle');
+            if(models['idle']) setAnim('idle');
+
+            // Carregar Inimigos
+            try {
+                const eBase = await loader.loadAsync(`./enemy_model.fbx`);
+                for(let i=0; i<20; i++) {
+                    const en = eBase.clone();
+                    en.scale.set(0.04, 0.04, 0.04);
+                    en.position.set(Math.random()*150-75, 0, Math.random()*150-75);
+                    en.hp = 100;
+                    
+                    // HP Bar UI
+                    const div = document.createElement('div');
+                    div.className = 'e-hp-bar';
+                    div.innerHTML = '<div class="e-hp-inner"></div>';
+                    document.body.appendChild(div);
+                    en.userData.bar = div;
+
+                    scene.add(en);
+                    enemies.push(en);
+                }
+            } catch(e) { console.log("Erro inimigos"); }
         }
 
-        async function loadEnemies() {
-            const enemyBase = await fbxLoader.loadAsync(`./enemy_model.fbx`);
-            for(let i=0; i<20; i++) {
-                const en = enemyBase.clone();
-                en.scale.set(0.03, 0.03, 0.03);
-                en.position.set(Math.random()*140-70, 0, Math.random()*140-70);
-                en.hp = 100;
-                
-                // Criar barra de vida no HTML
-                const barBg = document.createElement('div');
-                barBg.className = 'e-hp-bg';
-                const barFill = document.createElement('div');
-                barFill.className = 'e-hp-fill';
-                barBg.appendChild(barFill);
-                document.getElementById('enemy-hps').appendChild(barBg);
-                
-                en.userData.hpBar = barBg;
-                en.userData.hpFill = barFill;
-                
-                scene.add(en);
-                enemies.push(en);
-            }
+        function setAnim(name) {
+            if(!models[name] || models[name].mesh.visible) return;
+            Object.values(models).forEach(m => m.mesh.visible = false);
+            models[name].mesh.visible = true;
+            models[name].action.reset().play();
+            models.current = name;
         }
 
-        function changeState(n) {
-            if(!models[n] || currentState === n) return;
-            if(models[currentState]) models[currentState].mesh.visible = false;
-            currentState = n;
-            models[n].mesh.visible = true;
-            models[n].action.reset().play();
-        }
+        window.startGame = (diff) => {
+            difficulty = diff;
+            document.getElementById('menu').style.display = 'none';
+            document.getElementById('hud').style.display = 'block';
+            document.getElementById('bgm').play();
+            document.body.requestPointerLock();
+            gameActive = true;
+        };
 
-        function checkCombat() {
-            const isAttacking = (currentState === 'punch' || currentState === 'kick');
-            enemies.forEach(en => {
-                if(en.hp > 0) {
-                    const dist = playerGroup.position.distanceTo(en.position);
-                    if(isAttacking && dist < 5) {
-                        en.hp -= 1;
-                        en.userData.hpFill.style.width = en.hp + "%";
-                        combo++; updateComboUI();
-                        if(en.hp <= 0) { 
-                            en.visible = false; en.userData.hpBar.style.display = 'none';
-                            updateEnemyCount();
-                        }
-                    }
-                    // Atualiza posição da barra de vida na tela
-                    const vector = en.position.clone();
-                    vector.y += 6;
-                    vector.project(camera);
-                    const x = (vector.x * 0.5 + 0.5) * window.innerWidth;
-                    const y = (-(vector.y * 0.5 - 0.5) * window.innerHeight);
-                    en.userData.hpBar.style.left = x + 'px';
-                    en.userData.hpBar.style.top = y + 'px';
-                    en.userData.hpBar.style.display = 'block';
+        function flashRed(mesh) {
+            mesh.traverse(c => {
+                if(c.isMesh) {
+                    const oldCol = c.material.color.clone();
+                    c.material.color.set(0xff0000);
+                    setTimeout(() => c.material.color.copy(oldCol), 200);
                 }
             });
         }
 
-        function updateEnemyCount() {
-            const left = enemies.filter(e => e.hp > 0).length;
-            document.getElementById('enemies-left').innerText = left;
-            if(left === 0) document.getElementById('win-screen').style.display = 'block';
+        function update() {
+            if(!gameActive || playerHP <= 0) return;
+
+            // Movimentação Estilo GTA
+            let moving = false;
+            if(keys['KeyW']) { playerGroup.translateZ(0.3); moving = true; }
+            if(keys['KeyA']) playerGroup.rotation.y += 0.05;
+            if(keys['KeyD']) playerGroup.rotation.y -= 0.05;
+
+            if(keys['Space']) { 
+                setAnim('punch'); 
+                hitEnemies();
+            } else if(moving) { 
+                setAnim('run'); 
+            } else { 
+                setAnim('idle'); 
+            }
+
+            // Inimigos atacam de volta
+            enemies.forEach(en => {
+                if(en.hp > 0) {
+                    const d = playerGroup.position.distanceTo(en.position);
+                    if(d < 4 && Math.random() < 0.02) {
+                        const dmg = difficulty === 'pesadelo' ? 10 : 3;
+                        playerHP -= dmg;
+                        document.getElementById('hp-fill').style.width = playerHP + "%";
+                        flashRed(playerGroup);
+                        if(playerHP <= 0) endGame(false);
+                    }
+                    // Atualiza Barra de Vida do Inimigo
+                    const v = en.position.clone(); v.y += 8; v.project(camera);
+                    en.userData.bar.style.left = (v.x*0.5+0.5)*window.innerWidth + 'px';
+                    en.userData.bar.style.top = (-(v.y*0.5-0.5)*window.innerHeight) + 'px';
+                    en.userData.bar.firstChild.style.width = en.hp + "%";
+                }
+            });
+
+            // Camera GTA
+            const dist = 18;
+            camera.position.set(playerGroup.position.x - Math.sin(playerGroup.rotation.y)*dist, 8, playerGroup.position.z - Math.cos(playerGroup.rotation.y)*dist);
+            camera.lookAt(playerGroup.position.x, 3, playerGroup.position.z);
         }
 
-        function updateComboUI() {
-            const ui = document.getElementById('combo-ui');
-            ui.style.opacity = 1; document.getElementById('combo-count').innerText = combo;
-            clearTimeout(window.cT); window.cT = setTimeout(() => { ui.style.opacity = 0; combo = 0; }, 1000);
+        function hitEnemies() {
+            enemies.forEach(en => {
+                if(en.hp > 0 && playerGroup.position.distanceTo(en.position) < 6) {
+                    en.hp -= 2;
+                    flashRed(en);
+                    if(en.hp <= 0) {
+                        en.visible = false; en.userData.bar.style.display = 'none';
+                        const count = enemies.filter(e => e.hp > 0).length;
+                        document.getElementById('count').innerText = count;
+                        if(count === 0) endGame(true);
+                    }
+                }
+            });
+        }
+
+        function endGame(win) {
+            gameActive = false;
+            document.exitPointerLock();
+            document.getElementById(win ? 'win-screen' : 'game-over').style.display = 'block';
         }
 
         const keys = {};
         window.onkeydown = (e) => keys[e.code] = true;
         window.onkeyup = (e) => keys[e.code] = false;
-        window.startGame = () => { 
-            document.getElementById('menu').style.display = 'none'; 
-            document.getElementById('hud').style.display = 'block';
-            document.getElementById('bgm').play();
-            document.body.requestPointerLock();
-            gameActive = true; 
-        };
 
         function animate() {
             requestAnimationFrame(animate);
             const delta = clock.getDelta();
-            if(gameActive) {
-                playerGroup.rotation.y = mouseX;
-                let move = false;
-                if(keys['KeyW']) { playerGroup.translateZ(0.2); move = true; }
-                
-                if(keys['Space']) changeState('punch');
-                else if(keys['KeyK']) changeState('kick');
-                else if(move) changeState('run');
-                else changeState('idle');
-
-                checkCombat();
-
-                const camDist = 15;
-                camera.position.set(playerGroup.position.x - Math.sin(mouseX)*camDist, 6, playerGroup.position.z - Math.cos(mouseX)*camDist);
-                camera.lookAt(playerGroup.position.x, 3, playerGroup.position.z);
-            }
-            if(models[currentState]) models[currentState].mixer.update(delta);
+            if(models[models.current]) models[models.current].mixer.update(delta);
+            update();
             renderer.render(scene, camera);
         }
         init();
